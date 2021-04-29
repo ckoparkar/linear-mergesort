@@ -102,7 +102,11 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
                                             \tmp_l1 ->
                                                 writeMerge_par cmp n3 src_1_r n4 src_2_r tmp_r &
                                                     \tmp_r1 ->
-                                                        {- join tmp_l1 and tmp_r1 -}
+                                                        {-
+                                                         - need to join tmp_l1 and tmp_r1. but copying tmp_l1 and tmp_r1
+                                                         - into a new vector would be inefficient. instead we should return
+                                                         - the underlying mutable array
+                                                         -}
                                                         src_11 `lseq` src_21 `lseq` tmp1 `lseq` tmp_r1  `lseq` tmp_l1
 
 
