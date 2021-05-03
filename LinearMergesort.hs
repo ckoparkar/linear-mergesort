@@ -5,12 +5,14 @@
 {-# LANGUAGE MagicHash           #-}
 {-# LANGUAGE UnboxedTuples       #-}
 {-# LANGUAGE UnliftedNewtypes    #-}
+{-# LANGUAGE RankNTypes          #-}
 
 module LinearMergesort where
 
 import           Prelude as Prelude hiding ( splitAt )
 import           Prelude.Linear                   ( lseq, (&) )
 import           Data.Unrestricted.Linear
+import           Unsafe.Coerce
 {-
  - import qualified Data.Array.Mutable.Linear as Arr
  - import qualified Data.Array.Mutable.Unlifted.Linear as UArr
@@ -24,20 +26,20 @@ import Debug.Trace
 -- Sorting
 --------------------------------------------------------------------------------
 
-mergeSort :: forall a. Show a => (a -> a -> Int) -> Range a %1-> Ur (Range a)
+mergeSort :: forall s p a. Show a => (a -> a -> Int) -> Range s p a %1-> Ur [a]
 mergeSort cmp src0 =
     size2 src0 &
         \(Ur len, src1) ->
             alloc2 len (undefined :: a) (\tmp -> go src1 tmp)
   where
-    go :: Show a => Range a %1-> Range a %1-> Ur (Range a)
+    go :: Show a => Range s p a %1-> Range s1 p1 a %1-> Ur [a]
     go src tmp =
         writeSort1 cmp src tmp &
-            (Unsafe.toLinear Ur)
+            \sorted -> toList2 sorted
 
 -- | Sort the left and right halves of 'src' into 'tmp', and merge the results
 -- back into 'src'.
-writeSort1 :: Show a => (a -> a -> Int) -> Range a %1-> Range a %1-> Range a
+writeSort1 :: Show a => (a -> a -> Int) -> Range s p a %1-> Range s1 p1 a %1-> Range s p a
 writeSort1 cmp src0 tmp =
     {- INVARIANT: length src0 == length tmp -}
     size2 src0 &
@@ -58,13 +60,14 @@ writeSort1 cmp src0 tmp =
 
 -- | Sort the left and right halves of 'src' into 'tmp', and merge the results
 -- back into 'tmp'.
-writeSort2 :: Show a => (a -> a -> Int) -> Range a %1-> Range a %1-> Range a
+writeSort2 :: Show a => (a -> a -> Int) -> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
 writeSort2 cmp src0 tmp =
     {- INVARIANT: length src0 == length tmp -}
     size2 src0 &
         \(Ur len, src) ->
             if len <= 1
-            then tmp `lseq` src
+            -- REVIEW:
+            then tmp `lseq` Unsafe.toLinear unsafeCoerce src
             else splitAt (len `div` 2) src &
                      \((Ur n1,src_l),(Ur n2,src_r),src1) ->
                          splitAt (len `div` 2) tmp &
@@ -79,7 +82,7 @@ writeSort2 cmp src0 tmp =
                                                  (src1 `lseq` writeMerge_seq cmp n1 src_l1 n2 src_r1 tmp1)
 
 -- | Merge 'src_1' and 'src_2' into 'tmp'.
-writeMerge_par :: forall a. Show a => (a -> a -> Int) -> Int -> Range a %1-> Int -> Range a %1-> Range a %1-> Range a
+writeMerge_par :: forall s p a s1 p1. Show a => (a -> a -> Int) -> Int -> Range s p a %1-> Int -> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
 writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
     if (n1+n2) <= 2
     then writeMerge_seq cmp n1 src_10 n2 src_20 tmp0
@@ -90,7 +93,7 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
              then src_20 `lseq` write_loop 0 0 n1 src_10 tmp0
              else go (n1 `div` 2) src_10 src_20 tmp0
   where
-    go :: Show a => Int -> Range a %1-> Range a %1-> Range a %1-> Range a
+    go :: Show a => Int -> Range s p a %1-> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
     go mid1 src_1 src_2 tmp =
         unsafeGet2 mid1 src_1 &
             \(Ur pivot, src_11) ->
@@ -98,7 +101,7 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
                     \(Ur mid2, src_21) ->
                         go2 mid1 mid2 pivot src_11 src_21 tmp
 
-    go2 :: Show a => Int -> Int -> a -> Range a %1-> Range a %1-> Range a %1-> Range a
+    go2 :: Show a => Int -> Int -> a -> Range s p a %1-> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
     go2 mid1 mid2 pivot src_1 src_2 tmp00 =
         unsafeSet2 (mid1+mid2) pivot tmp00 &
             \tmp ->
@@ -123,7 +126,7 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
 
 
 -- | Merge 'src_1' and 'src_2' into 'tmp'.
-writeMerge_seq :: Show a => (a -> a -> Int) -> Int -> Range a %1-> Int -> Range a %1-> Range a %1-> Range a
+writeMerge_seq :: Show a => (a -> a -> Int) -> Int -> Range s p a %1-> Int -> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
 writeMerge_seq cmp n1 src_1 n2 src_2 tmp = writeMerge_seq_loop 0 0 0 n1 n2 cmp src_1 src_2 tmp
 
 
@@ -131,7 +134,7 @@ writeMerge_seq cmp n1 src_1 n2 src_2 tmp = writeMerge_seq_loop 0 0 0 n1 n2 cmp s
 -- i1 index into src_1
 -- i2 index into src_2
 -- j index into tmp (output).
-writeMerge_seq_loop :: Show a => Int -> Int -> Int -> Int -> Int -> (a -> a -> Int) -> Range a %1-> Range a %1-> Range a %1-> Range a
+writeMerge_seq_loop :: Show a => Int -> Int -> Int -> Int -> Int -> (a -> a -> Int) -> Range s p a %1-> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
 writeMerge_seq_loop i1 i2 j n1 n2 cmp src_1 src_2 tmp =
     if (i1 == n1)
     then src_1 `lseq` write_loop_seq j i2 n2 src_2 tmp
@@ -150,7 +153,7 @@ writeMerge_seq_loop i1 i2 j n1 n2 cmp src_1 src_2 tmp =
                                  unsafeSet2 j x2 tmp &
                                      \tmp_1 -> writeMerge_seq_loop i1 (i2+1) (j+1) n1 n2 cmp src_11 src_21 tmp_1
 
-write_loop :: Show a => Int -> Int -> Int -> Range a %1-> Range a %1-> Range a
+write_loop :: Show a => Int -> Int -> Int -> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
 write_loop = write_loop_seq
 
 -- | Copy elements from 'from' to 'to'.
@@ -158,7 +161,7 @@ write_loop = write_loop_seq
 -- from[from_idx]    ===>   to[to_idx]
 -- from[from_idx+1]  ===>   to[to_idx+1]
 -- ...
-write_loop_seq :: Show a => Int -> Int -> Int -> Range a %1-> Range a %1-> Range a
+write_loop_seq :: Show a => Int -> Int -> Int -> Range s p a %1-> Range s1 p1 a %1-> Range s1 p1 a
 write_loop_seq to_idx from_idx end from to =
     if from_idx == end
     then from `lseq` to
@@ -173,15 +176,15 @@ write_loop_seq to_idx from_idx end from to =
 -- That is, return a *p* s.t.
 -- (1) elements vec[0]..vec[p] are less than query, and
 -- (2) elements vec[p+1]..vec[end] are greater than query.
-binarySearch :: forall a. Show a => (a -> a -> Int) -> a -> Range a %1-> (Ur Int, Range a)
+binarySearch :: forall s p a. Show a => (a -> a -> Int) -> a -> Range s p a %1-> (Ur Int, Range s p a)
 {-# INLINE binarySearch #-}
 binarySearch cmp query = Unsafe.toLinear go
   where
-    go :: Show a => Range a -> (Ur Int, Range a)
+    go :: Show a => Range s p a -> (Ur Int, Range s p a)
     go vec = let (Ur len, vec1) = size2 vec
              in (Ur (binarySearch' 0 len cmp vec1 query), vec1)
 
-binarySearch' :: Show a => Int -> Int -> (a -> a -> Int) -> Range a %1-> a -> Int
+binarySearch' :: Show a => Int -> Int -> (a -> a -> Int) -> Range s p a %1-> a -> Int
 binarySearch' lo hi cmp vec query =
     if n == 0
     then vec `lseq` lo
@@ -219,7 +222,7 @@ compare1 r1 r2 =
 sortList :: [Int] -> [Int]
 sortList xs =
     fromList2 xs (\input -> mergeSort compare1 input) &
-        \(Ur sorted) -> Unsafe.toLinear unur (toList2 sorted)
+      \sorted -> Unsafe.toLinear unur sorted
 
 genRevList :: Int -> [Int]
 genRevList n = [n,n-1..1]
@@ -241,43 +244,43 @@ test1 = sortList (genRevList 10) == [1..10]
 
 type MArray# a = GHC.MutableArray# GHC.RealWorld a
 
-data Range a where
+data Range s p a where
     Range :: Int        {- lower bound -}
           -> Int        {- uppper bound -}
           -> MArray# a  {- underlying array -}
-          -> Range a
+          -> Range s p a
 
-instance Show a => Show (Range a) where
+instance Show a => Show (Range s p a) where
     show (Range l u _) = "Range{l=" ++ show l ++ ",u=" ++ show u ++ "}"
 
-instance Consumable (Range a) where
-    consume :: Range a %1-> ()
+instance Consumable (Range s p a) where
+    consume :: Range s p a %1-> ()
     consume (Range _ _ arr) = arr `lseq#` ()
 
 lseq# :: MArray# a %1-> b %1-> b
 lseq# = Unsafe.toLinear2 (\_ b -> b)
 
-size2 :: Range a %1 -> (Ur Int, Range a)
+size2 :: Range s p a %1 -> (Ur Int, Range s p a)
 size2 (Range l u a) = (Ur (u-l), Range l u a)
 
 {- https://hackage.haskell.org/package/linear-base-0.1.0/docs/src/Data.Array.Mutable.Linear.html#fromList -}
-fromList2 :: forall a b. [a] -> (Range a %1-> Ur b) %1 -> Ur b
+fromList2 :: forall a b. [a] -> (forall s p. Range s p a %1-> Ur b) %1 -> Ur b
 fromList2 list f =
   alloc2
     (length list)
     (error "invariant violation: unintialized array position")
     (\arr -> f (insert arr))
  where
-  insert :: Range a %1-> Range a
+  insert :: Range s p a %1-> Range s p a
   insert = doWrites (zip list [0..])
 
-  doWrites :: [(a,Int)] -> Range a %1-> Range a
+  doWrites :: [(a,Int)] -> Range s p a %1-> Range s p a
   doWrites [] arr = arr
   doWrites ((a,ix):xs) arr = doWrites xs (unsafeSet2 ix a arr)
 
 
 {- https://hackage.haskell.org/package/linear-base-0.1.0/docs/src/Data.Array.Mutable.Unlifted.Linear.html#toList -}
-toList2 :: Range a %1-> Ur [a]
+toList2 :: Range s p a %1-> Ur [a]
 toList2 (Range l u arr0) = Ur (go l u arr0)
  where
   go i len arr
@@ -287,7 +290,7 @@ toList2 (Range l u arr0) = Ur (go l u arr0)
           (# _, ret #) -> ret : go (i+1) len arr
 
 {- https://hackage.haskell.org/package/linear-base-0.1.0/docs/src/Data.Array.Mutable.Unlifted.Linear.html#alloc -}
-alloc2 :: Int -> a -> (Range a %1-> Ur b) %1 -> Ur b
+alloc2 :: Int -> a -> (forall s p. Range s p a %1-> Ur b) %1 -> Ur b
 alloc2 (GHC.I# len) a f =
   let new = GHC.runRW# Prelude.$ \st ->
         case GHC.newArray# len a st of
@@ -295,28 +298,28 @@ alloc2 (GHC.I# len) a f =
    in f new
 {-# NOINLINE alloc2 #-}  -- prevents runRW# from floating outwards
 
-unsafeGet2 :: forall a. Int -> Range a %1-> (Ur a, Range a)
+unsafeGet2 :: forall s p a. Int -> Range s p a %1-> (Ur a, Range s p a)
 unsafeGet2 (GHC.I# i) (Range (GHC.I# l) u arr0) = Unsafe.coerce go arr0
   where
-    go :: MArray# a -> (Ur a, Range a)
+    go :: MArray# a -> (Ur a, Range s p a)
     go arr =
       case GHC.runRW# (GHC.readArray# arr (l GHC.+# i)) of
         (# _, ret #) -> (Ur ret, Range (GHC.I# l) u arr)
 {-# NOINLINE unsafeGet2 #-}  -- prevents the runRW# effect from being reordered
 
-unsafeSet2 :: forall a. Int -> a -> Range a %1-> Range a
+unsafeSet2 :: forall s p a. Int -> a -> Range s p a %1-> Range s p a
 unsafeSet2 (GHC.I# i) val (Range (GHC.I# l) u arr0) = Unsafe.toLinear go arr0
   where
-    go :: MArray# a -> Range a
+    go :: MArray# a -> Range s p a
     go arr =
       case GHC.runRW# (GHC.writeArray# arr (l GHC.+# i) val) of
         _ -> Range (GHC.I# l) u arr
 {-# NOINLINE unsafeSet2 #-}  -- prevents the runRW# effect from being reordered
 
-slice2 :: forall a. Int -> Int -> Range a %1-> (Range a, Range a)
+slice2 :: forall s p a. Int -> Int -> Range s p a %1-> (Range s p a, Range s p a)
 slice2 i n (Range l0 u0 arr0) = Unsafe.coerce go
   where
-    go :: (Range a, Range a)
+    go :: (Range s p a, Range s p a)
     go =
         let l1 = l0 + i
             u1 = l0 + i + n
@@ -327,10 +330,10 @@ slice2 i n (Range l0 u0 arr0) = Unsafe.coerce go
                 else (Range l0 u0 arr0, Range l1 u1 arr0)
 
 -- | 'slice2' is not O(1), it copies elements. So this splitAt is quite expensive :(
-splitAt :: Show a => Int -> Range a %1-> ((Ur Int,Range a),(Ur Int,Range a),Range a)
+splitAt :: Show a => Int -> Range s p a %1-> ((Ur Int,Range s p a),(Ur Int,Range s p a),Range s p a)
 splitAt n arr0 = splitAt2 n n arr0
 
-splitAt2 :: Show a => Int -> Int -> Range a %1-> ((Ur Int,Range a),(Ur Int,Range a),Range a)
+splitAt2 :: Show a => Int -> Int -> Range s p a %1-> ((Ur Int,Range s p a),(Ur Int,Range s p a),Range s p a)
 splitAt2 n m arr0 =
     size2 arr0 &
         \(Ur len, arr1) ->
@@ -339,3 +342,6 @@ splitAt2 n m arr0 =
                     slice2 m (len - m) arr2 &
                         \(arr3, sl2) ->
                             ((Ur n,sl1), (Ur (len-n),sl2), arr3)
+
+declaim :: forall s p a. Range s p a %1-> MArray# a
+declaim (Range _ _ a) = a
