@@ -84,7 +84,7 @@ writeSort2 cmp src0 tmp =
 -- | Merge 'src_1' and 'src_2' into 'tmp'.
 writeMerge_par :: forall s a s1. Show a => (a -> a -> Int) -> Int -> Range s a %1-> Int -> Range s a %1-> Range s1 a %1-> Range s1 a
 writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
-    if (n1+n2) <= 2
+    if ((n1+n2) <= 2 || n1 == 0 || n2 == 0)
     then writeMerge_seq cmp n1 src_10 n2 src_20 tmp0
     else
         if (n1 == 0)
@@ -105,23 +105,20 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
     go2 mid1 mid2 pivot src_1 src_2 tmp00 =
         unsafeSet2 (mid1+mid2) pivot tmp00 &
             \tmp ->
-                {- (Unsafe.toLinear (traceShow (mid1,mid2,pivot))) (src_1 `lseq` src_2 `lseq` tmp) -}
+                {- (Unsafe.toLinear (traceShow (mid1,mid2,pivot))) -}
                 splitAt2 mid1 (mid1+1) src_1 &
                     \((Ur n5,src_1_l),(Ur n6,src_1_r),src_11) ->
                         splitAt mid2 src_2 &
                             \((Ur n3,src_2_l),(Ur n4,src_2_r),src_21) ->
                                 splitAt2 (mid1+mid2) (mid1+mid2+1) tmp &
                                     \((Ur _,tmp_l),(Ur _,tmp_r),tmp1) ->
-                                        writeMerge_par cmp n5 src_1_l n6 src_2_l tmp_l &
+                                        writeMerge_par cmp n5 src_1_l n3 src_2_l tmp_l &
                                             \tmp_l1 ->
-                                                writeMerge_par cmp n3 src_1_r n4 src_2_r tmp_r &
+                                                writeMerge_par cmp n6 src_1_r n4 src_2_r tmp_r &
                                                     \tmp_r1 ->
-                                                        {-
-                                                         - need to join tmp_l1 and tmp_r1. but copying tmp_l1 and tmp_r1
-                                                         - into a new vector would be inefficient. instead we should return
-                                                         - the underlying mutable array
-                                                         -}
-                                                        src_11 `lseq` src_21 `lseq` tmp1 `lseq` tmp_r1  `lseq` tmp_l1
+                                                        {- Unsafe.toLinear (traceShow (n5,n6,n3,n4)) -}
+                                                        src_11 `lseq` src_21 `lseq` tmp_l1 `lseq` tmp_r1 `lseq` tmp1
+                                                        {- src_11 `lseq` src_21 `lseq` tmp1 `lseq` (unsafeMerge tmp_l1 tmp_r1) -}
 
 
 
@@ -189,7 +186,7 @@ binarySearch' lo hi cmp vec query =
     if n == 0
     then vec `lseq` lo
     {- mid = (lo+(div n 2)) -}
-    else  unsafeGet2 (lo+(div n 2)) vec &
+    else unsafeGet2 (lo+(div n 2)) vec &
           \(Ur pivot, vec1) ->
               if (cmp query pivot) < 0
               then binarySearch' lo (lo+(div n 2)) cmp vec1 query
@@ -206,7 +203,7 @@ binarySearch' lo hi cmp vec query =
 
 goto_seqmerge :: Int
 {-# INLINE goto_seqmerge #-}
-goto_seqmerge = 4096
+goto_seqmerge = 2
 
 spawn :: Show a => a -> a
 {-# INLINE spawn #-}
@@ -219,16 +216,16 @@ compare1 r1 r2 =
         EQ -> 0
         GT -> 1
 
+genRevList :: Int -> [Int]
+genRevList n = [n,n-1..1]
+
 sortList :: [Int] -> [Int]
 sortList xs =
     fromList2 xs (\input -> mergeSort compare1 input) &
       \sorted -> Unsafe.toLinear unur sorted
 
-genRevList :: Int -> [Int]
-genRevList n = [n,n-1..1]
-
-test1 :: Bool
-test1 = sortList (genRevList 10) == [1..10]
+test1 :: Int -> Bool
+test1 n = sortList (genRevList n) == [1..n]
 
 
 --------------------------------------------------------------------------------
@@ -345,3 +342,7 @@ splitAt2 n m arr0 =
 
 declaim :: forall s a. Range s a %1-> MArray# a
 declaim (Range _ _ a) = a
+
+
+unsafeMerge :: Range s a %1-> Range s a %1-> Range s a
+unsafeMerge (Range l1 u1 a) (Range l2 u2 _) = Range (min l1 l2) (max u1 u2) a
