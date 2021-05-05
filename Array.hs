@@ -172,14 +172,20 @@ unsafeAlias x = Unsafe.toLinear (\a -> (a, a)) x
 unsafeSplitAt :: Show a => Int -> Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
 unsafeSplitAt n m arr0 =
     if m < n
-    then arr0 `lseq` error $ "unsafeSplitAt: " ++ show (m,n)
-    else
-    size arr0 &
-        \(Ur len, arr1) ->
-            unsafeAlias arr1 &
+    then arr0 `lseq` error $ "unsafeSplitAt: m < n, " ++ show (m,n)
+    else size arr0 &
+             \(Ur len, arr1) ->
+                 go len arr1
+  where
+    go len arr1 =
+        unsafeAlias arr1 &
                 \(arr2,arr3) ->
-                    slice 0 n arr2 &
+                    slice 0 n' arr2 &
                         \sl1 ->
-                            slice m (len - m) arr3 &
+                            slice x x' arr3 &
                                 \sl2 ->
-                                    ((Ur n,sl1), (Ur (len-n),sl2))
+                                    ((Ur n',sl1), (Ur x',sl2))
+        where
+          n'  = max n 0
+          x   = min m len
+          x'  = max 0 (len - m)
