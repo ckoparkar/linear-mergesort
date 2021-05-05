@@ -1,6 +1,7 @@
 {-# LANGUAGE LinearTypes         #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE MagicHash           #-}
 
 module LinearMergesort where
 
@@ -16,11 +17,11 @@ import           Array
 -- Sorting
 --------------------------------------------------------------------------------
 
-mergeSort :: forall s a. Show a => (a -> a -> Int) -> Range s a %1-> Ur [a]
-mergeSort cmp src0 =
+mergeSort :: forall s a. Show a => a -> (a -> a -> Int) -> Range s a %1-> Ur [a]
+mergeSort initial cmp src0 =
     size src0 &
         \(Ur len, src1) ->
-            alloc len (undefined :: a) (\tmp -> go src1 tmp)
+            alloc len (initial :: a) (\tmp -> go src1 tmp)
   where
     go :: Show a => Range s a %1-> Range s1 a %1-> Ur [a]
     go src tmp =
@@ -48,7 +49,7 @@ writeSort1 cmp src00 tmp =
                                                writeSort2 cmp src_r tmp_r &
                                                    \tmp_r1 ->
                                                        {- tmp1 `lseq` src1 `lseq` tmp_l1 `lseq` tmp_r1 -}
-                                                       writeMerge_seq cmp n3 tmp_l1 n4 tmp_r1 src1
+                                                       writeMerge_par cmp n3 tmp_l1 n4 tmp_r1 src1
 
 -- | Sort the left and right halves of 'src' into 'tmp', and merge the results
 -- back into 'tmp'.
@@ -71,13 +72,12 @@ writeSort2 cmp src0 tmp0 =
                                              \src_l1 ->
                                                  writeSort1 cmp src_r tmp_r &
                                                      \src_r1 ->
-                                                         writeMerge_seq cmp n1 src_l1 n2 src_r1 tmp1
+                                                         writeMerge_par cmp n1 src_l1 n2 src_r1 tmp1
 
 
 -- | Merge 'src_1' and 'src_2' into 'tmp'.
 writeMerge_seq :: Show a => (a -> a -> Int) -> Int -> Range s a %1-> Int -> Range s a %1-> Range s1 a %1-> Range s1 a
 writeMerge_seq cmp n1 src_1 n2 src_2 tmp = writeMerge_seq_loop 0 0 0 n1 n2 cmp src_1 src_2 tmp
-
 
 -- | The main sequential merge function.
 -- i1 index into src_1
@@ -120,12 +120,10 @@ write_loop_seq to_idx from_idx end from to =
                 unsafeSet to_idx val to &
                     \to1 -> write_loop_seq (to_idx+1) (from_idx+1) end from1 to1
 
-{-
-
 -- | Merge 'src_1' and 'src_2' into 'tmp'.
 writeMerge_par :: forall s a s1. Show a => (a -> a -> Int) -> Int -> Range s a %1-> Int -> Range s a %1-> Range s1 a %1-> Range s1 a
 writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
-    if ((n1+n2) <= 2 || n1 == 0 || n2 == 0)
+    if ((n1+n2) <= goto_seqmerge || n1 == 0 || n2 == 0)
     then writeMerge_seq cmp n1 src_10 n2 src_20 tmp0
     else
         if (n1 == 0)
@@ -141,28 +139,31 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
                 binarySearch cmp pivot src_2 &
                     \(Ur mid2, src_21) ->
                         go2 mid1 mid2 pivot src_11 src_21 tmp
+                        -- unsafeAlias src_11 & \((Range g h i),src_12) ->
+                        -- unsafeAlias src_21 & \((Range a b c),src_22) ->
+                        -- unsafeAlias tmp & \((Range d e f),tmp2) ->
+                        -- (Unsafe.toLinear (trace (showRange (Range g h i) ++ showRange (Range a b c) ++ showRange (Range d e f)
+                        --                          ++ show (n1,n2,mid1,mid2,pivot))))
+                        -- go2 mid1 mid2 pivot src_12 src_22 tmp2
 
     go2 :: Show a => Int -> Int -> a -> Range s a %1-> Range s a %1-> Range s1 a %1-> Range s1 a
     go2 mid1 mid2 pivot src_1 src_2 tmp00 =
         unsafeSet (mid1+mid2) pivot tmp00 &
             \tmp ->
-                {- (Unsafe.toLinear (traceShow (mid1,mid2,pivot))) -}
-                splitAt_nonContiguous mid1 (mid1+1) src_1 &
-                    \((Ur n5,src_1_l),(Ur n6,src_1_r),src_11) ->
+                unsafeSplitAt mid1 (mid1+1) src_1 &
+                    \((Ur n5,src_1_l),(Ur n6,src_1_r)) ->
                         splitAt mid2 src_2 &
-                            \((Ur n3,src_2_l),(Ur n4,src_2_r),src_21) ->
-                                splitAt_nonContiguous (mid1+mid2) (mid1+mid2+1) tmp &
-                                    \((Ur _,tmp_l),(Ur _,tmp_r),tmp1) ->
+                            \((Ur n3,src_2_l),(Ur n4,src_2_r)) ->
+                                unsafeSplitAt (mid1+mid2) (mid1+mid2+1) tmp &
+                                    \((Ur _,tmp_l),(Ur _,tmp_r)) ->
                                         writeMerge_par cmp n5 src_1_l n3 src_2_l tmp_l &
                                             \tmp_l1 ->
                                                 writeMerge_par cmp n6 src_1_r n4 src_2_r tmp_r &
                                                     \tmp_r1 ->
                                                         {- Unsafe.toLinear (traceShow (n5,n6,n3,n4)) -}
-                                                        src_11 `lseq` src_21 `lseq` tmp_l1 `lseq` tmp_r1 `lseq` tmp1
-                                                        {- src_11 `lseq` src_21 `lseq` tmp1 `lseq` (unsafeMerge tmp_l1 tmp_r1) -}
+                                                        (merge tmp_l1 tmp_r1)
 
-
--}
+--------------------------------------------------------------------------------
 
 -- | Return 'query's *position* in 'vec'.
 --
@@ -216,7 +217,7 @@ genRevList n = [n,n-1..1]
 
 sortList :: [Int] -> [Int]
 sortList xs =
-    fromList xs (\input -> mergeSort compare1 input) &
+    fromList xs (\input -> mergeSort 0 compare1 input) &
       \sorted -> Unsafe.toLinear unur sorted
 
 test1 :: Int -> Bool

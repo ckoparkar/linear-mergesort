@@ -7,8 +7,9 @@
 {-# LANGUAGE InstanceSigs        #-}
 
 module Array
-    ( Array(..), Range(..), size, fromList, toList, alloc, splitAt, splitAt_nonContiguous
-    , unsafeGet, unsafeSet, unsafeMerge, unsafeAlias
+    ( Array(..), showMArray#, Range(..), showRange
+    , size, fromList, toList, alloc, slice, splitAt, merge
+    , unsafeGet, unsafeSet, unsafeAlias, unsafeSplitAt
     ) where
 
 import           Prelude.Linear ( (&) )
@@ -32,6 +33,30 @@ type MArray# a = GHC.MutableArray# GHC.RealWorld a
 
 data Array a = Array (MArray# a)
 
+showMArray# :: Show a => MArray# a -> String
+showMArray# arr = do
+  let sz = GHC.sizeofMutableArray# arr
+      ls = go 0 (GHC.I# sz) arr
+  show ls
+  where
+   go :: Int -> Int -> MArray# a -> [a]
+   go i len arr
+    | i == len = []
+    | GHC.I# i# <- i =
+        case GHC.runRW# (GHC.readArray# arr i#) of
+          (# _, ret #) -> ret : go (i+1) len arr
+
+showRange :: Show a => Range s a %1-> String
+showRange (Range l u arr) =
+    "Range{l=" ++ show l ++ ",u=" ++ show u ++ ",arr=" ++ show (go l u arr) ++ "}"
+  where
+   go :: Int -> Int -> MArray# a -> [a]
+   go i len arr
+    | i == len = []
+    | GHC.I# i# <- i =
+        case GHC.runRW# (GHC.readArray# arr i#) of
+          (# _, ret #) -> ret : go (i+1) len arr
+
 instance Consumable (Array a) where
     consume :: Array a %1-> ()
     consume (Array arr) = arr `lseq#` ()
@@ -43,7 +68,7 @@ data Range s a where
           -> Range s a
 
 instance Show a => Show (Range s a) where
-    show (Range l u _) = "Range{l=" ++ show l ++ ",u=" ++ show u ++ "}"
+    show r = Unsafe.toLinear showRange r
 
 instance Consumable (Range s a) where
     consume :: Range s a %1-> ()
@@ -90,24 +115,36 @@ alloc (GHC.I# len) a f =
    in f new
 {-# NOINLINE alloc #-}  -- prevents runRW# from floating outwards
 
--- | 'unsafeSlice' is not O(1), it copies elements. So this splitAt is quite expensive :(
+-- | 'slice' is not O(1), it copies elements. So this splitAt is quite expensive :(
 splitAt :: Show a => Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
-splitAt n arr0 = splitAt_nonContiguous n n arr0
+splitAt n arr0 = unsafeSplitAt n n arr0
 
-splitAt_nonContiguous :: Show a => Int -> Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
-splitAt_nonContiguous n m arr0 =
-    size arr0 &
-        \(Ur len, arr1) ->
-            unsafeSlice 0 n arr1 &
-                \(arr2, sl1) ->
-                    unsafeSlice m (len - m) arr2 &
-                        \(arr3, sl2) ->
-                            arr3 `lseq` ((Ur n,sl1), (Ur (len-n),sl2))
+merge :: Range s a %1-> Range s a %1-> Range s a
+merge (Range l1 u1 a) (Range l2 u2 _) =
+    Range l1 u2 a
+    -- if u1 == l2
+    -- then Range l1 u2 a
+    -- else error $ "merge: non-contiguous slices: " ++ show (l1,u1) ++ " " ++ show (l2,u2)
+
+-- | Unsafe because it aliases the input slice.
+slice :: forall s a. Int -> Int -> Range s a %1-> Range s a
+slice i n (Range l0 u0 arr0) = Unsafe.coerce go
+  where
+    go :: Range s a
+    go =
+        let l1 = l0 + i
+            u1 = l0 + i + n
+        in if l1 > u0
+           then error ("slice: lower out of bounds, " ++ show (l1,u0))
+           else if u1 > u0
+                then error ("slice: upper out of bounds, " ++ show (u1,u0))
+                else (Range l1 u1 arr0)
 
 --------------------------------------------------------------------------------
 -- Unsafe operations
 --------------------------------------------------------------------------------
 
+-- | Unsafe because there's no bounds-checking, but OK wrt linearity.
 unsafeGet :: forall s a. Int -> Range s a %1-> (Ur a, Range s a)
 unsafeGet (GHC.I# i) (Range (GHC.I# l) u arr0) = Unsafe.coerce go arr0
   where
@@ -117,6 +154,7 @@ unsafeGet (GHC.I# i) (Range (GHC.I# l) u arr0) = Unsafe.coerce go arr0
         (# _, ret #) -> (Ur ret, Range (GHC.I# l) u arr)
 {-# NOINLINE unsafeGet #-}  -- prevents the runRW# effect from being reordered
 
+-- | Unsafe because there's no bounds-checking, but OK wrt linearity.
 unsafeSet :: forall s a. Int -> a -> Range s a %1-> Range s a
 unsafeSet (GHC.I# i) val (Range (GHC.I# l) u arr0) = Unsafe.toLinear go arr0
   where
@@ -126,21 +164,22 @@ unsafeSet (GHC.I# i) val (Range (GHC.I# l) u arr0) = Unsafe.toLinear go arr0
         _ -> Range (GHC.I# l) u arr
 {-# NOINLINE unsafeSet #-}  -- prevents the runRW# effect from being reordered
 
-unsafeSlice :: forall s a. Int -> Int -> Range s a %1-> (Range s a, Range s a)
-unsafeSlice i n (Range l0 u0 arr0) = Unsafe.coerce go
-  where
-    go :: (Range s a, Range s a)
-    go =
-        let l1 = l0 + i
-            u1 = l0 + i + n
-        in if l1 > u0
-           then error ("unsafeSlice: lower out of bounds, " ++ show (l1,u0))
-           else if u1 > u0
-                then error ("unsafeSlice: upper out of bounds, " ++ show (u1,u0))
-                else (Range l0 u0 arr0, Range l1 u1 arr0)
-
-unsafeMerge :: Range s a %1-> Range s a %1-> Range s a
-unsafeMerge (Range l1 u1 a) (Range l2 u2 _) = Range (min l1 l2) (max u1 u2) a
-
+-- | Unsafe because it aliases the input slice.
 unsafeAlias :: Range s a %1 -> (Range s a, Range s a)
 unsafeAlias x = Unsafe.toLinear (\a -> (a, a)) x
+
+-- | Unsafe because it allows non-contiguous slices.
+unsafeSplitAt :: Show a => Int -> Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
+unsafeSplitAt n m arr0 =
+    if m < n
+    then arr0 `lseq` error $ "unsafeSplitAt: " ++ show (m,n)
+    else
+    size arr0 &
+        \(Ur len, arr1) ->
+            unsafeAlias arr1 &
+                \(arr2,arr3) ->
+                    slice 0 n arr2 &
+                        \sl1 ->
+                            slice m (len - m) arr3 &
+                                \sl2 ->
+                                    ((Ur n,sl1), (Ur (len-n),sl2))
