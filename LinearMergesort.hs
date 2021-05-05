@@ -139,15 +139,29 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
                 binarySearch cmp pivot src_2 &
                     \(Ur mid2, src_21) ->
                         go2 mid1 mid2 pivot src_11 src_21 tmp
-                        -- unsafeAlias src_11 & \((Range g h i),src_12) ->
-                        -- unsafeAlias src_21 & \((Range a b c),src_22) ->
-                        -- unsafeAlias tmp & \((Range d e f),tmp2) ->
-                        -- (Unsafe.toLinear (trace (showRange (Range g h i) ++ showRange (Range a b c) ++ showRange (Range d e f)
-                        --                          ++ show (n1,n2,mid1,mid2,pivot))))
-                        -- go2 mid1 mid2 pivot src_12 src_22 tmp2
 
     go2 :: Show a => Int -> Int -> a -> Range s a %1-> Range s a %1-> Range s1 a %1-> Range s1 a
     go2 mid1 mid2 pivot src_1 src_2 tmp00 =
+        splitAt mid1 src_1 &
+            \((Ur n5,src_1_l),(Ur _,src_1_r0)) ->
+                splitAt 1 src_1_r0 &
+                    \((Ur 1, src_one),(Ur n6, src_1_r)) ->
+                        splitAt mid2 src_2 &
+                            \((Ur n3,src_2_l),(Ur n4,src_2_r)) ->
+                                splitAt (mid1+mid2) tmp00 &
+                                    \((Ur _,tmp_l),(Ur _,tmp_r0)) ->
+                                        splitAt 1 tmp_r0 &
+                                            \((Ur 1,tmp_one),(Ur _,tmp_r)) ->
+                                                write_loop_seq 0 0 1 src_one tmp_one &
+                                                    \tmp_one' ->
+                                                        writeMerge_par cmp n5 src_1_l n3 src_2_l tmp_l &
+                                                            \tmp_l1 ->
+                                                                writeMerge_par cmp n6 src_1_r n4 src_2_r tmp_r &
+                                                                    \tmp_r1 ->
+                                                                        merge (merge tmp_l1 tmp_one') tmp_r1
+
+
+{-
         unsafeSet (mid1+mid2) pivot tmp00 &
             \tmp ->
                 unsafeSplitAt mid1 (mid1+1) src_1 &
@@ -162,6 +176,7 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
                                                     \tmp_r1 ->
                                                         {- Unsafe.toLinear (traceShow (n5,n6,n3,n4)) -}
                                                         (merge tmp_l1 tmp_r1)
+-}
 
 --------------------------------------------------------------------------------
 

@@ -9,7 +9,7 @@
 module Array
     ( Array(..), showMArray#, Range(..), showRange
     , size, fromList, toList, alloc, slice, splitAt, merge
-    , unsafeGet, unsafeSet, unsafeAlias, unsafeSplitAt
+    , unsafeGet, unsafeSet, unsafeAlias
     ) where
 
 import           Prelude.Linear ( (&) )
@@ -121,10 +121,9 @@ splitAt n arr0 = unsafeSplitAt n n arr0
 
 merge :: Range s a %1-> Range s a %1-> Range s a
 merge (Range l1 u1 a) (Range l2 u2 _) =
-    Range l1 u2 a
-    -- if u1 == l2
-    -- then Range l1 u2 a
-    -- else error $ "merge: non-contiguous slices: " ++ show (l1,u1) ++ " " ++ show (l2,u2)
+    if u1 == l2
+    then Range l1 u2 a
+    else error $ "merge: non-contiguous slices: " ++ show (l1,u1) ++ " " ++ show (l2,u2)
 
 -- | Unsafe because it aliases the input slice.
 slice :: forall s a. Int -> Int -> Range s a %1-> Range s a
