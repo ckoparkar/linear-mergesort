@@ -29,46 +29,49 @@ mergeSort cmp src0 =
 
 -- | Sort the left and right halves of 'src' into 'tmp', and merge the results
 -- back into 'src'.
+--
+-- INVARIANT: length src00 == length tmp
 writeSort1 :: Show a => (a -> a -> Int) -> Range s a %1-> Range s1 a %1-> Range s a
-writeSort1 cmp src0 tmp =
-    {- INVARIANT: length src0 == length tmp -}
-    size src0 &
-        \(Ur len, src) ->
+writeSort1 cmp src00 tmp =
+    size src00 &
+        \(Ur len, src0) ->
             if len <= 1
-            then tmp `lseq` src
-            else splitAt (len `div` 2) src &
-                     \((Ur _n1,src_l),(Ur _n2,src_r),src1) ->
-                         splitAt (len `div` 2) tmp &
-                             {- INVARIANT: n1 == n3, and n2 == n4 -}
-                             \((Ur n3,tmp_l),(Ur n4,tmp_r),tmp1) ->
-                                 writeSort2 cmp src_l tmp_l &
-                                     \tmp_l1 ->
-                                         writeSort2 cmp src_r tmp_r &
-                                             \tmp_r1 ->
-                                                 {- tmp1 `lseq` src1 `lseq` tmp_l1 `lseq` tmp_r1 -}
-                                                 (tmp1 `lseq` writeMerge_seq cmp n3 tmp_l1 n4 tmp_r1 src1)
+            then tmp `lseq` src0
+            else unsafeAlias src0 &
+                   \(src, src1) ->
+                       splitAt (len `div` 2) src &
+                           \((Ur _n1,src_l),(Ur _n2,src_r)) ->
+                               splitAt (len `div` 2) tmp &
+                                   \((Ur n3,tmp_l),(Ur n4,tmp_r)) ->
+                                       writeSort2 cmp src_l tmp_l &
+                                           \tmp_l1 ->
+                                               writeSort2 cmp src_r tmp_r &
+                                                   \tmp_r1 ->
+                                                       {- tmp1 `lseq` src1 `lseq` tmp_l1 `lseq` tmp_r1 -}
+                                                       writeMerge_seq cmp n3 tmp_l1 n4 tmp_r1 src1
 
 -- | Sort the left and right halves of 'src' into 'tmp', and merge the results
 -- back into 'tmp'.
+--
+-- INVARIANT: length src0 == length tmp0
 writeSort2 :: Show a => (a -> a -> Int) -> Range s a %1-> Range s1 a %1-> Range s1 a
-writeSort2 cmp src0 tmp =
+writeSort2 cmp src0 tmp0 =
     {- INVARIANT: length src0 == length tmp -}
     size src0 &
         \(Ur len, src) ->
             if len <= 1
-            then write_loop_seq 0 0 1 src tmp
-            else splitAt (len `div` 2) src &
-                     \((Ur n1,src_l),(Ur n2,src_r),src1) ->
-                         splitAt (len `div` 2) tmp &
-                             {- INVARIANT: n1 == n3, and n2 == n4 -}
-                             \((Ur _n3,tmp_l),(Ur _n4,tmp_r),tmp1) ->
-                                 writeSort1 cmp src_l tmp_l &
-                                     \src_l1 ->
-                                         writeSort1 cmp src_r tmp_r &
-                                             \src_r1 ->
-                                                 {- tmp1 `lseq` src1 `lseq` src_l1 `lseq` src_r1 -}
-                                                 {- Unsafe.toLinear (traceShow len) -}
-                                                 (src1 `lseq` writeMerge_seq cmp n1 src_l1 n2 src_r1 tmp1)
+            then write_loop_seq 0 0 1 src tmp0
+            else unsafeAlias tmp0 &
+                     \(tmp, tmp1) ->
+                         splitAt (len `div` 2) src &
+                             \((Ur n1,src_l),(Ur n2,src_r)) ->
+                                 splitAt (len `div` 2) tmp &
+                                     \((Ur _n3,tmp_l),(Ur _n4,tmp_r)) ->
+                                         writeSort1 cmp src_l tmp_l &
+                                             \src_l1 ->
+                                                 writeSort1 cmp src_r tmp_r &
+                                                     \src_r1 ->
+                                                         writeMerge_seq cmp n1 src_l1 n2 src_r1 tmp1
 
 
 -- | Merge 'src_1' and 'src_2' into 'tmp'.
@@ -117,6 +120,7 @@ write_loop_seq to_idx from_idx end from to =
                 unsafeSet to_idx val to &
                     \to1 -> write_loop_seq (to_idx+1) (from_idx+1) end from1 to1
 
+{-
 
 -- | Merge 'src_1' and 'src_2' into 'tmp'.
 writeMerge_par :: forall s a s1. Show a => (a -> a -> Int) -> Int -> Range s a %1-> Int -> Range s a %1-> Range s1 a %1-> Range s1 a
@@ -158,7 +162,7 @@ writeMerge_par cmp n1 src_10 n2 src_20 tmp0 =
                                                         {- src_11 `lseq` src_21 `lseq` tmp1 `lseq` (unsafeMerge tmp_l1 tmp_r1) -}
 
 
-
+-}
 
 -- | Return 'query's *position* in 'vec'.
 --

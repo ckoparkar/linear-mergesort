@@ -7,8 +7,8 @@
 {-# LANGUAGE InstanceSigs        #-}
 
 module Array
-    ( Array(..), Range(..), size, fromList, toList, alloc, unsafeGet, unsafeSet
-    , splitAt, splitAt_nonContiguous, unsafeMerge
+    ( Array(..), Range(..), size, fromList, toList, alloc, splitAt, splitAt_nonContiguous
+    , unsafeGet, unsafeSet, unsafeMerge, unsafeAlias
     ) where
 
 import           Prelude.Linear ( (&) )
@@ -90,6 +90,24 @@ alloc (GHC.I# len) a f =
    in f new
 {-# NOINLINE alloc #-}  -- prevents runRW# from floating outwards
 
+-- | 'unsafeSlice' is not O(1), it copies elements. So this splitAt is quite expensive :(
+splitAt :: Show a => Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
+splitAt n arr0 = splitAt_nonContiguous n n arr0
+
+splitAt_nonContiguous :: Show a => Int -> Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
+splitAt_nonContiguous n m arr0 =
+    size arr0 &
+        \(Ur len, arr1) ->
+            unsafeSlice 0 n arr1 &
+                \(arr2, sl1) ->
+                    unsafeSlice m (len - m) arr2 &
+                        \(arr3, sl2) ->
+                            arr3 `lseq` ((Ur n,sl1), (Ur (len-n),sl2))
+
+--------------------------------------------------------------------------------
+-- Unsafe operations
+--------------------------------------------------------------------------------
+
 unsafeGet :: forall s a. Int -> Range s a %1-> (Ur a, Range s a)
 unsafeGet (GHC.I# i) (Range (GHC.I# l) u arr0) = Unsafe.coerce go arr0
   where
@@ -121,19 +139,8 @@ unsafeSlice i n (Range l0 u0 arr0) = Unsafe.coerce go
                 then error ("unsafeSlice: upper out of bounds, " ++ show (u1,u0))
                 else (Range l0 u0 arr0, Range l1 u1 arr0)
 
--- | 'unsafeSlice' is not O(1), it copies elements. So this splitAt is quite expensive :(
-splitAt :: Show a => Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a),Range s a)
-splitAt n arr0 = splitAt_nonContiguous n n arr0
-
-splitAt_nonContiguous :: Show a => Int -> Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a),Range s a)
-splitAt_nonContiguous n m arr0 =
-    size arr0 &
-        \(Ur len, arr1) ->
-            unsafeSlice 0 n arr1 &
-                \(arr2, sl1) ->
-                    unsafeSlice m (len - m) arr2 &
-                        \(arr3, sl2) ->
-                            ((Ur n,sl1), (Ur (len-n),sl2), arr3)
-
 unsafeMerge :: Range s a %1-> Range s a %1-> Range s a
 unsafeMerge (Range l1 u1 a) (Range l2 u2 _) = Range (min l1 l2) (max u1 u2) a
+
+unsafeAlias :: Range s a %1 -> (Range s a, Range s a)
+unsafeAlias x = Unsafe.toLinear (\a -> (a, a)) x
