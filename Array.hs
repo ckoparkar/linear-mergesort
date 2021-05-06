@@ -122,6 +122,10 @@ splitAt n arr0 =
             go len arr1
   where
     go len arr1 =
+      let n' = max n 0
+          m  = min n' len
+          m' = max 0 (len - n')
+      in
         unsafeAlias arr1 &
             \(arr2,arr3) ->
                 unsafeSlice 0 m arr2 &
@@ -129,11 +133,6 @@ splitAt n arr0 =
                         unsafeSlice m m' arr3 &
                             \sl2 ->
                                 ((Ur m,sl1), (Ur m',sl2))
-      where
-        n'  = max n 0
-        m   = min n' len
-        m'  = max 0 (len - n')
-
 
 merge :: Range s a %1-> Range s a %1-> Range s a
 merge (Range l1 u1 a) (Range l2 u2 _) =
