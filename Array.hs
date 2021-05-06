@@ -8,7 +8,7 @@
 
 module Array
     ( Array(..), showMArray#, Range(..), showRange
-    , size, fromList, toList, alloc, slice, splitAt, merge
+    , size, fromList, toList, alloc, unsafeSlice, splitAt, merge
     , unsafeGet, unsafeSet, unsafeAlias
     ) where
 
@@ -115,29 +115,31 @@ alloc (GHC.I# len) a f =
    in f new
 {-# NOINLINE alloc #-}  -- prevents runRW# from floating outwards
 
--- | 'slice' is not O(1), it copies elements. So this splitAt is quite expensive :(
 splitAt :: Show a => Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
-splitAt n arr0 = unsafeSplitAt n n arr0
+splitAt n arr0 =
+    size arr0 &
+        \(Ur len, arr1) ->
+            go len arr1
+  where
+    go len arr1 =
+        unsafeAlias arr1 &
+            \(arr2,arr3) ->
+                unsafeSlice 0 m arr2 &
+                    \sl1 ->
+                        unsafeSlice m m' arr3 &
+                            \sl2 ->
+                                ((Ur m,sl1), (Ur m',sl2))
+      where
+        n'  = max n 0
+        m   = min n' len
+        m'  = max 0 (len - n')
+
 
 merge :: Range s a %1-> Range s a %1-> Range s a
 merge (Range l1 u1 a) (Range l2 u2 _) =
     if u1 == l2
     then Range l1 u2 a
     else error $ "merge: non-contiguous slices: " ++ show (l1,u1) ++ " " ++ show (l2,u2)
-
--- | Unsafe because it aliases the input slice.
-slice :: forall s a. Int -> Int -> Range s a %1-> Range s a
-slice i n (Range l0 u0 arr0) = Unsafe.coerce go
-  where
-    go :: Range s a
-    go =
-        let l1 = l0 + i
-            u1 = l0 + i + n
-        in if l1 > u0
-           then error ("slice: lower out of bounds, " ++ show (l1,u0))
-           else if u1 > u0
-                then error ("slice: upper out of bounds, " ++ show (u1,u0))
-                else (Range l1 u1 arr0)
 
 --------------------------------------------------------------------------------
 -- Unsafe operations
@@ -167,24 +169,16 @@ unsafeSet (GHC.I# i) val (Range (GHC.I# l) u arr0) = Unsafe.toLinear go arr0
 unsafeAlias :: Range s a %1 -> (Range s a, Range s a)
 unsafeAlias x = Unsafe.toLinear (\a -> (a, a)) x
 
--- | Unsafe because it allows non-contiguous slices.
-unsafeSplitAt :: Show a => Int -> Int -> Range s a %1-> ((Ur Int,Range s a),(Ur Int,Range s a))
-unsafeSplitAt n m arr0 =
-    if m < n
-    then arr0 `lseq` error $ "unsafeSplitAt: m < n, " ++ show (m,n)
-    else size arr0 &
-             \(Ur len, arr1) ->
-                 go len arr1
+-- | Unsafe because it aliases the input slice.
+unsafeSlice :: forall s a. Int -> Int -> Range s a %1-> Range s a
+unsafeSlice i n (Range l0 u0 arr0) = Unsafe.coerce go
   where
-    go len arr1 =
-        unsafeAlias arr1 &
-                \(arr2,arr3) ->
-                    slice 0 n' arr2 &
-                        \sl1 ->
-                            slice x x' arr3 &
-                                \sl2 ->
-                                    ((Ur n',sl1), (Ur x',sl2))
-        where
-          n'  = max n 0
-          x   = min m len
-          x'  = max 0 (len - m)
+    go :: Range s a
+    go =
+        let l1 = l0 + i
+            u1 = l0 + i + n
+        in if l1 > u0
+           then error ("slice: lower out of bounds, " ++ show (l1,u0))
+           else if u1 > u0
+                then error ("slice: upper out of bounds, " ++ show (u1,u0))
+                else (Range l1 u1 arr0)
